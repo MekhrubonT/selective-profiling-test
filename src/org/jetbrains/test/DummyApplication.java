@@ -1,5 +1,6 @@
 package org.jetbrains.test;
 
+
 import java.util.List;
 import java.util.Random;
 
@@ -8,11 +9,15 @@ import java.util.Random;
  * 18-Apr-17
  */
 public class DummyApplication {
+    private final CallTree tree;
+
     private final List<String> args;
     private Random random = new Random(System.nanoTime());
 
+
     public DummyApplication(List<String> args) {
         this.args = args;
+        tree = CallTree.getInstance();
     }
 
     private boolean nextBoolean() {
@@ -30,54 +35,58 @@ public class DummyApplication {
 
     private void sleep() {
         try {
-            Thread.sleep(random.nextInt(20));
+            Thread.sleep(20);
         } catch (InterruptedException ignored) {
 
         }
     }
 
     private void abc(String s) {
-        //your code here
+        tree.addMethodCall("abc");
 
-        sleep();
-        if (stop()) {
-            //do nothing
-        }
-        else if (nextBoolean()) {
-            def(nextArg());
-        }
-        else {
-            xyz(nextArg());
+        try {
+            sleep();
+            if (stop()) {
+                //do nothing
+            } else if (nextBoolean()) {
+                def(nextArg());
+            } else {
+                xyz(nextArg());
+            }
+        } finally {
+            tree.finishMethodCall();
         }
     }
 
     private void def(String s) {
-        //your code here
-
-        sleep();
-        if (stop()) {
-            //do nothing
-        }
-        else if (nextBoolean()) {
-            abc(nextArg());
-        }
-        else {
-            xyz(nextArg());
+        tree.addMethodCall("def");
+        try {
+            sleep();
+            if (stop()) {
+                //do nothing
+            } else if (nextBoolean()) {
+                abc(nextArg());
+            } else {
+                xyz(nextArg());
+            }
+        } finally {
+            tree.finishMethodCall();
         }
     }
 
     private void xyz(String s) {
-        //your code here
-
-        sleep();
-        if (stop()) {
-            //do nothing
-        }
-        else if (nextBoolean()) {
-            abc(nextArg());
-        }
-        else {
-            def(nextArg());
+        tree.addMethodCall("xyz");
+        try {
+            sleep();
+            if (stop()) {
+                //do nothing
+            } else if (nextBoolean()) {
+                abc(nextArg());
+            } else {
+                def(nextArg());
+            }
+        } finally {
+            tree.finishMethodCall();
         }
     }
 
