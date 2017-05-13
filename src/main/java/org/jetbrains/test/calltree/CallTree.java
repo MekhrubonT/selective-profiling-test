@@ -1,16 +1,17 @@
-package org.jetbrains.test;
+package org.jetbrains.test.calltree;
+
+import javafx.util.Pair;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.attribute.FileAttribute;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Stack;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+
+import static org.jetbrains.test.calltree.utils.Utils.*;
 
 /**
  * This tree is used to profile methods. It allowes to register the starting and finishing method call
@@ -18,17 +19,25 @@ import java.util.concurrent.ConcurrentHashMap;
  * Created by mekhrubon on 09.05.2017.
  */
 public class CallTree {
+    public static final int DEFAULT_SHIFT = 3;
     private static final Map<Thread, CallTree> trees = new ConcurrentHashMap<>();
     private final Node root;
     private final Stack<Node> currentTreeStackTrace = new Stack<>();
 
 
     /**
-     * Creates in instance of CallTree with given name for the root vertex.
+     * Creates in instance of CallTree with given name for the root vertex with default shift.
+     *
      * @param rootName name of root vertex
      */
     public CallTree(String rootName) {
-        this(new Node(rootName));
+        this(rootName, DEFAULT_SHIFT);
+    }
+
+    // Constructor with the shift of nested call in output relatively to calling method, throws illegalArgumentException
+    // if shift is negative
+    public CallTree(String rootName, int shift) {
+        this(new Node(rootName, shift));
     }
 
     private CallTree(Node root) {
@@ -36,9 +45,14 @@ public class CallTree {
         currentTreeStackTrace.add(root);
     }
 
+    // clean all information about trees
+    public static void clear() {
+        trees.clear();
+    }
 
     /**
      * Returns the list of all CallTree created by {@link CallTree#getInstance()}.
+     *
      * @return the list of all CallTree created by {@link CallTree#getInstance()}.
      */
     public static List<CallTree> getTrees() {
@@ -48,6 +62,7 @@ public class CallTree {
     /**
      * During the first call of this method in this thread creates the instance of CallTree and returns it. For every
      * next call of this method returns the previously created CallTree object.
+     *
      * @return the appropriate to current thread object of CallTree
      */
     public static CallTree getInstance() {
@@ -55,26 +70,48 @@ public class CallTree {
         return trees.get(Thread.currentThread());
     }
 
-    /**
-     * Tries to deserialize previously stored CallTree from the given file.
-     * @param name the relative or absolute path to required file
-     * @return constructed CallTree from given file
-     * @throws FileNotFoundException if the file does not exist,
-     *                   is a directory rather than a regular file,
-     *                   or for some other reason cannot be opened for
-     *                   reading.
-     * @throws IOException if an I/O error occurs while opening or reading the file
-     * @throws ClassNotFoundException Class of a Node cannot be found.
-     * @throws InvalidClassException Something is wrong with a class Node while trying to deserialize.
-     * @throws SecurityException      if a security manager exists and its
-     *               <code>checkRead</code> method denies read access
-     *               to the file.
-     */
-    public static CallTree readFromFile(String name) throws IOException, ClassNotFoundException {
-        try ( FileInputStream fileIn = new FileInputStream(name);
-             ObjectInputStream inputStream = new ObjectInputStream(fileIn)) {
-            return new CallTree((Node) inputStream.readObject());
+    // Returns parsed CallTree from given file
+    public static CallTree readFromFile(String pathname) throws IOException, FileParseException {
+        return new CallTree(recursiveRead(new BufferedReader(new InputStreamReader(new FileInputStream(pathname), StandardCharsets.UTF_8)), null));
+    }
+
+    // the helper function for parsing tree from file.
+    private static Node recursiveRead(BufferedReader reader, String expectedTitle) throws IOException, FileParseException {
+        String header = reader.readLine();
+        int startIndexOfTitleFunctionBlock = header.indexOf("[");
+        int endIndexOfTitleFunctionBlock = header.indexOf("]:");
+        String headerWithoutParenthethis = header
+                .substring(startIndexOfTitleFunctionBlock + 1, endIndexOfTitleFunctionBlock);
+
+        if (expectedTitle != null && !headerWithoutParenthethis.equals(expectedTitle)) {
+            throw new FileParseException("The given file is corrupted. Title expected ["
+                    + expectedTitle + "], but was found [" + headerWithoutParenthethis + "]");
         }
+
+        Pair<String, Integer> parsedTitleNameAndHash = parseNode(headerWithoutParenthethis);
+        Node node = new Node(parsedTitleNameAndHash.getKey(), 2);
+        List<String> nestedCalledMethodsList = methodsCallFromNodeParser(header.substring(endIndexOfTitleFunctionBlock + 2));
+
+        for (String s : nestedCalledMethodsList) {
+            node.addChilder(recursiveRead(reader, s));
+        }
+        if (node.hashCode() != parsedTitleNameAndHash.getValue()) {
+            throw new FileParseException("An error ocurred while parsing tree, Hashcodes are not equal.");
+        }
+        return node;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (obj == null || !(obj instanceof CallTree)) {
+            return false;
+        }
+        return root.equals(((CallTree) obj).root) && currentTreeStackTrace.equals(((CallTree) obj).currentTreeStackTrace);
+    }
+
+    @Override
+    public int hashCode() {
+        return (root.hashCode() * 2957) ^ currentTreeStackTrace.hashCode();
     }
 
     private String treeThreadName() {
@@ -88,7 +125,7 @@ public class CallTree {
      * enclosed in square brackets (<tt>"[]"</tt>). Then pairs of all registered methods called in this thread and their code numbers
      * enclosed in round brackets (<tt>"()"</tt>). On the next lines this toString method is called recursively on all
      * aforementioned methods, but instead of thread name method name is placed.
-     *
+     * <p>
      * Code numbers of two vertex can coincide and that is very be sad.
      *
      * @return a string representation of this CallTree
@@ -101,53 +138,42 @@ public class CallTree {
     }
 
     /**
-     * Calls {@link CallTree#storeInFile(String)} with name argument {@code thread.getName() + " " + thread.getId()},
+     * Calls {@link CallTree#storeInFile(String)} with name argument {@code thread.getName() + " " + thread.getId() + ".tree"},
      * where thread is one, in which this instance was created, but not deserialized.
-     * @throws IOException {@link CallTree#storeInFile(String)}
+     * <p>
+     * {@link CallTree#storeInFile(String)}
      */
     public void storeInFile() throws IOException {
         storeInFile(treeThreadName() + ".tree");
+
     }
 
     /**
      * Tries to store this tree in the given file.
-     * @param name relative or absolute path to file. If no such file found, this method will try to create it.
-     * @throws InvalidPathException if the name cannot be converted to a {@code Path}
-     * @throws IOException if file cannot be opened, created or directories cannot be created.
-     * @throws SecurityException  if a security manager exists and its
-      *               <code>checkWrite</code> method denies write access
-      *               to the file.
-     * @throws  InvalidClassException Something is wrong with a {@link Node} during
-     *          serialization.
-     * @throws  NotSerializableException Some object to be serialized does not
-     *          implement the java.io.Serializable interface.
-
+     *
+     * @throws InvalidPathException - if the path string cannot be converted to a Path
+     * @throws SecurityException    In the case of the default provider, the {@link
+     *                              SecurityManager#checkRead(String)} is invoked to check
+     *                              read access to the file.
      * @see Files#createDirectories(Path, FileAttribute[])
      * @see Files#createFile(Path, FileAttribute[])
      */
     public void storeInFile(String name) throws IOException {
-        Path path = Paths.get(name);
-        if (Files.notExists(path)) {
-            if (path.getParent() != null) {
-                Files.createDirectories(path.getParent());
-            }
-            Files.createFile(path);
-        }
-        try (FileOutputStream fileOut = new FileOutputStream(name);
-             ObjectOutputStream outputStream = new ObjectOutputStream(fileOut)) {
-            outputStream.writeObject(root);
-            System.out.println("Successfuly stored " + treeThreadName() + " in " + name);
+        createDirectoriesAndFile(name);
+        try (PrintWriter writer = new PrintWriter(new File(name))) {
+            writer.println(toString());
         }
     }
 
 
     /**
      * Registers method call to this CallTree
+     *
      * @param methodName name of called method
      */
-    public void addMethodCall(String methodName) {
+    public void addMethodCall(String methodName, Object... args) {
         Node currentState = currentTreeStackTrace.peek();
-        currentTreeStackTrace.push(currentState.addChildren(methodName));
+        currentTreeStackTrace.push(currentState.addChildren(methodName + "{" + String.join(",", Arrays.stream(args).map(Object::toString).toArray(String[]::new)) + "}"));
     }
 
     /**
@@ -160,17 +186,32 @@ public class CallTree {
         currentTreeStackTrace.pop();
     }
 
-    static private class Node implements Serializable {
+    static private class Node {
         final String name;
         final List<Node> children;
+        String shift;
 
-        Node(String name) {
+        Node(String name, int shift) {
+            if (shift < 0) {
+                throw new IllegalArgumentException("Shift should be non-negative");
+            }
+
             this.name = name;
             children = new ArrayList<>();
+
+            StringBuilder d = new StringBuilder();
+            d.append("|");
+            while (--shift > 0) {
+                d.append(" ");
+            }
+            this.shift = d.toString();
         }
 
         Node addChildren(String name) {
-            Node newChild = new Node(name);
+            return addChilder(new Node(name, shift.length()));
+        }
+
+        private Node addChilder(Node newChild) {
             children.add(newChild);
             return newChild;
         }
@@ -187,7 +228,7 @@ public class CallTree {
 
         StringBuilder print(StringBuilder result, int depth) {
             for (int i = 0; i < depth; i++) {
-                result.append(' ');
+                result.append(shift);
             }
             result.append("[").append(name).append(", ").append(hashCode()).append("]: ");
             for (int i = 0; i < children.size(); i++) {
@@ -202,6 +243,14 @@ public class CallTree {
                 child.print(result, depth + 1);
             }
             return result;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj == null || !(obj instanceof Node)) {
+                return false;
+            }
+            return name.equals(((Node) obj).name) && children.equals(((Node) obj).children);
         }
     }
 
