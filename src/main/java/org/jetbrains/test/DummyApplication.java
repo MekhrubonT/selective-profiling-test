@@ -64,7 +64,7 @@ public class DummyApplication {
         }
     }
 
-    @Profiling(type = Profiling.NameType.SHORT)
+    @Profiling(type = Profiling.NameType.OWN, ownName = "xyz ot stringa")
     private void xyz(String s) {
         sleep();
         if (stop()) {
