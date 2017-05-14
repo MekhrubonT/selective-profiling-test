@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.FileAttribute;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 import static org.jetbrains.test.calltree.utils.Utils.*;
 
@@ -18,10 +19,11 @@ import static org.jetbrains.test.calltree.utils.Utils.*;
  * and build the calls tree.
  * Created by mekhrubon on 09.05.2017.
  */
-public class CallTree {
+public class CallTree implements Iterable<CallTree.Node> {
     public static final int DEFAULT_SHIFT = 3;
     private static final Map<Thread, CallTree> trees = new ConcurrentHashMap<>();
     private final Node root;
+    private Node last;
     private final Stack<Node> currentTreeStackTrace = new Stack<>();
 
 
@@ -42,7 +44,13 @@ public class CallTree {
 
     private CallTree(Node root) {
         this.root = root;
+        last = root;
         currentTreeStackTrace.add(root);
+    }
+
+    @Override
+    public void forEach(Consumer<? super Node> action) {
+        iterator().forEachRemaining(action);
     }
 
     // clean all information about trees
@@ -72,7 +80,20 @@ public class CallTree {
 
     // Returns parsed CallTree from given file
     public static CallTree readFromFile(String pathname) throws IOException, FileParseException {
-        return new CallTree(recursiveRead(new BufferedReader(new InputStreamReader(new FileInputStream(pathname), StandardCharsets.UTF_8)), null));
+        CallTree tree = new CallTree(recursiveRead(new BufferedReader(new InputStreamReader(new FileInputStream(pathname), StandardCharsets.UTF_8)), null));
+        tree.last = initNext(tree.root, null);
+        return tree;
+    }
+
+    private static Node initNext(Node root, Node last) {
+        if (last != null) {
+            last.next = root;
+        }
+        last = root;
+        for (Node child : root.children) {
+            last = initNext(child, last);
+        }
+        return last;
     }
 
     // the helper function for parsing tree from file.
@@ -93,7 +114,7 @@ public class CallTree {
         List<String> nestedCalledMethodsList = methodsCallFromNodeParser(header.substring(endIndexOfTitleFunctionBlock + 2));
 
         for (String s : nestedCalledMethodsList) {
-            node.addChilder(recursiveRead(reader, s));
+            node.addChild(recursiveRead(reader, s));
         }
         if (node.hashCode() != parsedTitleNameAndHash.getValue()) {
             throw new FileParseException("An error ocurred while parsing tree, Hashcodes are not equal.");
@@ -174,6 +195,8 @@ public class CallTree {
     public void addMethodCall(String methodName, Object... args) {
         Node currentState = currentTreeStackTrace.peek();
         currentTreeStackTrace.push(currentState.addChildren(methodName + "{" + String.join(",", Arrays.stream(args).map(Object::toString).toArray(String[]::new)) + "}"));
+        last.next = currentTreeStackTrace.peek();
+        last = last.next;
     }
 
     /**
@@ -186,10 +209,20 @@ public class CallTree {
         currentTreeStackTrace.pop();
     }
 
-    static private class Node {
-        final String name;
-        final List<Node> children;
-        String shift;
+    @Override
+    public Iterator<Node> iterator() {
+        return new NodeIterator(root);
+    }
+
+    static public class Node {
+        public String getName() {
+            return name;
+        }
+
+        private final String name;
+        private final List<Node> children;
+        private String shift;
+        private Node next = null;
 
         Node(String name, int shift) {
             if (shift < 0) {
@@ -208,10 +241,10 @@ public class CallTree {
         }
 
         Node addChildren(String name) {
-            return addChilder(new Node(name, shift.length()));
+            return addChild(new Node(name, shift.length()));
         }
 
-        private Node addChilder(Node newChild) {
+        private Node addChild(Node newChild) {
             children.add(newChild);
             return newChild;
         }
@@ -254,4 +287,31 @@ public class CallTree {
         }
     }
 
+
+    class NodeIterator implements Iterator<Node> {
+        private Node current;
+
+        NodeIterator(Node current) {
+            this.current = current;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return current != null;
+        }
+
+        @Override
+        public Node next() {
+            Node res = current;
+            current = current.next;
+            return res;
+        }
+
+        @Override
+        public void forEachRemaining(Consumer<? super Node> action) {
+            while (hasNext()) {
+                action.accept(next());
+            }
+        }
+    }
 }

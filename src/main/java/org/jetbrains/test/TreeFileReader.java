@@ -13,7 +13,8 @@ import java.io.PrintWriter;
 public class TreeFileReader {
     public static void main(String[] args) throws IOException, FileParseException {
         PrintWriter writer = new PrintWriter(new File("output.txt"));
-        writer.println(CallTree.readFromFile("D:\\selective-profiling-test\\pool-1-thread-1 11.tree"));
+        CallTree x = CallTree.readFromFile("D:\\selective-profiling-test\\pool-1-thread-3 13.tree");
+        writer.println(x);
         writer.close();
     }
 
