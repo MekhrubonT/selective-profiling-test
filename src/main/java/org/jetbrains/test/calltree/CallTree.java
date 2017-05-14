@@ -224,7 +224,11 @@ public class CallTree implements Iterable<CallTree.Node> {
         private String shift;
         private Node next = null;
 
-        Node(String name, int shift) {
+        public List<Node> getChildren() {
+            return Collections.unmodifiableList(children);
+        }
+
+        private Node(String name, int shift) {
             if (shift < 0) {
                 throw new IllegalArgumentException("Shift should be non-negative");
             }
@@ -240,7 +244,7 @@ public class CallTree implements Iterable<CallTree.Node> {
             this.shift = d.toString();
         }
 
-        Node addChildren(String name) {
+        private Node addChildren(String name) {
             return addChild(new Node(name, shift.length()));
         }
 
@@ -259,7 +263,7 @@ public class CallTree implements Iterable<CallTree.Node> {
             return print(new StringBuilder(), 0).toString();
         }
 
-        StringBuilder print(StringBuilder result, int depth) {
+        private StringBuilder print(StringBuilder result, int depth) {
             for (int i = 0; i < depth; i++) {
                 result.append(shift);
             }
