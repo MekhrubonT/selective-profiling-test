@@ -24,7 +24,7 @@ public class DummyApplication {
     }
 
     private boolean stop() {
-        return random.nextDouble() < 0.05;
+        return random.nextDouble() < 0.95;
     }
 
     private String nextArg() {

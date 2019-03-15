@@ -1,6 +1,7 @@
 package org.jetbrains.test.calltree.utils;
 
 import javafx.util.Pair;
+import org.jetbrains.test.calltree.CallTree;
 import org.jetbrains.test.calltree.FileParseException;
 
 import java.io.IOException;
@@ -46,21 +47,17 @@ public class Utils {
         return nodes;
     }
 
-    public static Pair<String, Integer> parseNode(String nameComaHashNode) throws FileParseException {
-        for (int i = 0; i < nameComaHashNode.length(); i++) {
-            if (nameComaHashNode.charAt(i) == ',' && isInteger(nameComaHashNode.substring(i + 2))) {
-                return new Pair<>(nameComaHashNode.substring(0, i), Integer.parseInt(nameComaHashNode.substring(i + 2)));
-            }
-        }
-        throw new FileParseException("The given file doesn't contain tree in required format");
-    }
-
-    private static boolean isInteger(String isinteger) {
+    public static Pair<CallTree.Node, Integer> parseNode(String nameComaHashNode) throws FileParseException {
         try {
-            int value = Integer.parseInt(isinteger);
-            return true;
-        } catch (NumberFormatException e) {
-            return false;
+            String[] nodeData = nameComaHashNode.split(",");
+            String[] executionTime = nodeData[2].split("#");
+            String name = nodeData[0];
+            int hashCode = Integer.parseInt(nodeData[1].trim());
+            long startTime = Long.parseLong(executionTime[0].trim());
+            long endTime = Long.parseLong(executionTime[1].trim());
+            return new Pair<>(new CallTree.Node(name, 2, startTime, endTime), hashCode);
+        } catch (IllegalArgumentException e) {
+            throw new FileParseException("The given file doesn't contain tree in required format", e);
         }
     }
 }

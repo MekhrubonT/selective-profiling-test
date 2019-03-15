@@ -8,8 +8,10 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileAttribute;
+import java.sql.Time;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 import static org.jetbrains.test.calltree.utils.Utils.*;
@@ -26,7 +28,6 @@ public class CallTree implements Iterable<CallTree.Node> {
     private Node last;
     private final Stack<Node> currentTreeStackTrace = new Stack<>();
 
-
     /**
      * Creates in instance of CallTree with given name for the root vertex with default shift.
      *
@@ -39,7 +40,7 @@ public class CallTree implements Iterable<CallTree.Node> {
     // Constructor with the shift of nested call in output relatively to calling method, throws illegalArgumentException
     // if shift is negative
     public CallTree(String rootName, int shift) {
-        this(new Node(rootName, shift));
+        this(new Node(rootName, shift, System.nanoTime()));
     }
 
     private CallTree(Node root) {
@@ -80,7 +81,11 @@ public class CallTree implements Iterable<CallTree.Node> {
 
     // Returns parsed CallTree from given file
     public static CallTree readFromFile(String pathname) throws IOException, FileParseException {
-        CallTree tree = new CallTree(recursiveRead(new BufferedReader(new InputStreamReader(new FileInputStream(pathname), StandardCharsets.UTF_8)), null));
+        return readFromStream(new FileInputStream(pathname));
+    }
+    // Returns parsed CallTree from given file
+    public static CallTree readFromStream(InputStream stream) throws IOException, FileParseException {
+        CallTree tree = new CallTree(recursiveRead(new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8)), null));
         tree.last = initNext(tree.root, null);
         return tree;
     }
@@ -104,19 +109,19 @@ public class CallTree implements Iterable<CallTree.Node> {
         String headerWithoutParenthethis = header
                 .substring(startIndexOfTitleFunctionBlock + 1, endIndexOfTitleFunctionBlock);
 
-        if (expectedTitle != null && !headerWithoutParenthethis.equals(expectedTitle)) {
+        if (expectedTitle != null && !headerWithoutParenthethis.startsWith(expectedTitle)) {
             throw new FileParseException("The given file is corrupted. Title expected ["
                     + expectedTitle + "], but was found [" + headerWithoutParenthethis + "]");
         }
 
-        Pair<String, Integer> parsedTitleNameAndHash = parseNode(headerWithoutParenthethis);
-        Node node = new Node(parsedTitleNameAndHash.getKey(), 2);
+        Pair<Node, Integer> parsedNodeAndHash = parseNode(headerWithoutParenthethis);
+        Node node = parsedNodeAndHash.getKey();
         List<String> nestedCalledMethodsList = methodsCallFromNodeParser(header.substring(endIndexOfTitleFunctionBlock + 2));
 
         for (String s : nestedCalledMethodsList) {
             node.addChild(recursiveRead(reader, s));
         }
-        if (node.hashCode() != parsedTitleNameAndHash.getValue()) {
+        if (node.hashCode() != parsedNodeAndHash.getValue()) {
             throw new FileParseException("An error ocurred while parsing tree, Hashcodes are not equal.");
         }
         return node;
@@ -194,7 +199,11 @@ public class CallTree implements Iterable<CallTree.Node> {
      */
     public void addMethodCall(String methodName, Object... args) {
         Node currentState = currentTreeStackTrace.peek();
-        currentTreeStackTrace.push(currentState.addChildren(methodName + "{" + String.join(",", Arrays.stream(args).map(Object::toString).toArray(String[]::new)) + "}"));
+        currentTreeStackTrace.push(currentState.addChild(
+                methodName + "{" + String.join(",", Arrays.stream(args).map(Object::toString).toArray(String[]::new)) + "}",
+                System.nanoTime()
+                )
+        );
         last.next = currentTreeStackTrace.peek();
         last = last.next;
     }
@@ -206,7 +215,7 @@ public class CallTree implements Iterable<CallTree.Node> {
         if (currentTreeStackTrace.size() == 1) {
             throw new IllegalStateException("Trying to finish last registered method, but hadn't added it before");
         }
-        currentTreeStackTrace.pop();
+        currentTreeStackTrace.pop().setEndCallTime(System.nanoTime());
     }
 
     @Override
@@ -219,16 +228,30 @@ public class CallTree implements Iterable<CallTree.Node> {
             return name;
         }
 
+        public String getFunctionName() {
+            int i = name.indexOf('{');
+            return i == -1 ? name : name.substring(0, i);
+        }
+
         private final String name;
         private final List<Node> children;
         private String shift;
         private Node next = null;
 
+        public void setEndCallTime(long endCallTime) {
+            this.endCallTime = endCallTime;
+        }
+
+        private long startCallTime, endCallTime;
+
         public List<Node> getChildren() {
             return Collections.unmodifiableList(children);
         }
 
-        private Node(String name, int shift) {
+        public Node(String name, int shift, long startCallTime) {
+            this(name, shift, startCallTime, -1);
+        }
+        public Node(String name, int shift, long startCallTime, long endCallTime) {
             if (shift < 0) {
                 throw new IllegalArgumentException("Shift should be non-negative");
             }
@@ -242,10 +265,12 @@ public class CallTree implements Iterable<CallTree.Node> {
                 d.append(" ");
             }
             this.shift = d.toString();
+            this.startCallTime = startCallTime;
+            this.endCallTime = endCallTime;
         }
 
-        private Node addChildren(String name) {
-            return addChild(new Node(name, shift.length()));
+        private Node addChild(String name, long startCallTime) {
+            return addChild(new Node(name, shift.length(), startCallTime));
         }
 
         private Node addChild(Node newChild) {
@@ -267,7 +292,11 @@ public class CallTree implements Iterable<CallTree.Node> {
             for (int i = 0; i < depth; i++) {
                 result.append(shift);
             }
-            result.append("[").append(name).append(", ").append(hashCode()).append("]: ");
+            result.append("[")
+                    .append(String.format("%s, ", name))
+                    .append(String.format("%d, ", hashCode()))
+                    .append(String.format("%d#%d", startCallTime, endCallTime))
+                    .append("]: ");
             for (int i = 0; i < children.size(); i++) {
                 Node child = children.get(i);
                 result.append("(").append(child.name).append(", ").append(child.hashCode()).append(")");
@@ -288,6 +317,10 @@ public class CallTree implements Iterable<CallTree.Node> {
                 return false;
             }
             return name.equals(((Node) obj).name) && children.equals(((Node) obj).children);
+        }
+
+        public long executionTime() {
+            return endCallTime == -1 ? 0 : endCallTime - startCallTime;
         }
     }
 
